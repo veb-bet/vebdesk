@@ -9,6 +9,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QDate, QTime, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFontDatabase, QFont, QColor
+import json
+import uuid
+from datetime import datetime
 
 _notify_backend = None
 try:
@@ -61,6 +64,43 @@ c.execute('''CREATE TABLE IF NOT EXISTS settings
               font_choice TEXT DEFAULT 'Monospace',
               neon_anim INTEGER DEFAULT 1,
               default_reminder TEXT DEFAULT NULL)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS projects
+             (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, description TEXT, color TEXT, created_at TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS boards
+             (id INTEGER PRIMARY KEY, project_id INTEGER, name TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS board_lists
+             (id INTEGER PRIMARY KEY, board_id INTEGER, name TEXT, position INTEGER)''')
+c.execute('''CREATE TABLE IF NOT EXISTS tasks
+             (id INTEGER PRIMARY KEY, list_id INTEGER, title TEXT, description TEXT, status TEXT DEFAULT 'todo',
+              priority INTEGER DEFAULT 0, due_date TEXT, assignee TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS subtasks
+             (id INTEGER PRIMARY KEY, task_id INTEGER, title TEXT, done INTEGER DEFAULT 0)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS docs
+             (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT, content TEXT, tags TEXT, public INTEGER DEFAULT 0, updated_at TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS db_tables
+             (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, schema_json TEXT, created_at TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS db_rows
+             (id INTEGER PRIMARY KEY, table_id INTEGER, row_json TEXT, created_at TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS budgets
+             (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, limit_amount REAL, created_at TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS expenses
+             (id INTEGER PRIMARY KEY, budget_id INTEGER, amount REAL, category TEXT, note TEXT, date TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS habits
+             (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, frequency TEXT, streak INTEGER DEFAULT 0)''')
+c.execute('''CREATE TABLE IF NOT EXISTS habit_logs
+             (id INTEGER PRIMARY KEY, habit_id INTEGER, date TEXT, done INTEGER DEFAULT 0)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS journal_entries
+             (id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, content TEXT, mood TEXT)''')
+
+c.execute('''CREATE TABLE IF NOT EXISTS collections
+             (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, items_json TEXT, created_at TEXT)''')
+
 conn.commit()
 
 THEMES = {
@@ -170,6 +210,8 @@ class VebDesk(QMainWindow):
         self.init_notes_tab(); self.init_calendar_tab(); self.init_calculator_tab()
         self.init_messages_tab(); self.init_storage_tab(); self.init_timer_tab()
         self.init_search_tab(); self.init_profile_tab()
+        self.init_projects_tab(); self.init_docs_tab(); self.init_databases_tab()
+        self.init_personal_tab(); self.init_collab_tab(); self.init_integrations_tab()
 
     def init_notes_tab(self):
         self.notes_tab = QWidget(); layout = QVBoxLayout()
@@ -499,6 +541,272 @@ class VebDesk(QMainWindow):
             conn.commit()
         except Exception:
             pass
+
+    def init_projects_tab(self):
+        self.projects_tab = QWidget(); layout = QVBoxLayout()
+        row = QHBoxLayout()
+        self.projects_list = QListWidget(); self.projects_list.itemClicked.connect(self.open_project_board)
+        add_proj_btn = QPushButton("NEW PROJECT"); add_proj_btn.clicked.connect(self.add_project)
+        add_board_btn = QPushButton("NEW BOARD"); add_board_btn.clicked.connect(self.create_board_for_selected_project)
+        row.addWidget(add_proj_btn); row.addWidget(add_board_btn)
+        layout.addWidget(QLabel("PROJECTS")); layout.addWidget(self.projects_list); layout.addLayout(row)
+        self.board_area = QWidget(); self.board_layout = QVBoxLayout(); self.board_area.setLayout(self.board_layout)
+        layout.addWidget(QLabel("BOARD PREVIEW")); layout.addWidget(self.board_area)
+        self.projects_tab.setLayout(layout); self.tabs.addTab(self.projects_tab, "PROJECTS")
+        self.refresh_projects()
+
+    def add_project(self):
+        name, ok = QInputDialog.getText(self, "New Project", "Project name")
+        if ok and name:
+            desc, _ = QInputDialog.getText(self, "Description", "Project description")
+            color = self.current_theme["accent"]
+            c.execute("INSERT INTO projects (user_id, name, description, color, created_at) VALUES (?, ?, ?, ?, ?)",
+                      (self.user_id, name, desc, color, datetime.utcnow().isoformat()))
+            conn.commit(); self.refresh_projects(); send_system_notification("Project created", name)
+
+    def refresh_projects(self):
+        self.projects_list.clear()
+        c.execute("SELECT id, name FROM projects WHERE user_id=?", (self.user_id,))
+        for pid, name in c.fetchall():
+            item = QListWidgetItem(name); item.setData(Qt.ItemDataRole.UserRole, pid); self.projects_list.addItem(item)
+
+    def open_project_board(self, item):
+        pid = item.data(Qt.ItemDataRole.UserRole)
+        for i in reversed(range(self.board_layout.count())): self.board_layout.itemAt(i).widget().deleteLater()
+        c.execute("SELECT id, name FROM boards WHERE project_id=?", (pid,))
+        for bid, name in c.fetchall():
+            lbl = QLabel(f"Board: {name}"); self.board_layout.addWidget(lbl)
+            c.execute("SELECT id, name FROM board_lists WHERE board_id=?", (bid,))
+            lw = QListWidget()
+            for lid, lname in c.fetchall():
+                lw.addItem(lname)
+            self.board_layout.addWidget(lw)
+
+    def create_board_for_selected_project(self):
+        item = self.projects_list.currentItem()
+        if not item: QMessageBox.warning(self, "ERROR", "Select project"); return
+        pid = item.data(Qt.ItemDataRole.UserRole)
+        name, ok = QInputDialog.getText(self, "New Board", "Board name")
+        if ok and name:
+            c.execute("INSERT INTO boards (project_id, name) VALUES (?, ?)", (pid, name)); conn.commit()
+            self.open_project_board(item)
+
+    def init_docs_tab(self):
+        self.docs_tab = QWidget(); layout = QVBoxLayout()
+        row = QHBoxLayout()
+        self.docs_list = QListWidget(); self.docs_list.itemClicked.connect(self.load_doc)
+        new_doc_btn = QPushButton("NEW DOC"); new_doc_btn.clicked.connect(self.create_doc)
+        save_doc_btn = QPushButton("SAVE DOC"); save_doc_btn.clicked.connect(self.save_doc)
+        row.addWidget(new_doc_btn); row.addWidget(save_doc_btn)
+        self.doc_editor = QTextEdit()
+        self.doc_title = QLineEdit(); self.doc_title.setPlaceholderText("Title")
+        layout.addWidget(QLabel("DOCUMENTS")); layout.addWidget(self.docs_list); layout.addLayout(row)
+        layout.addWidget(QLabel("TITLE")); layout.addWidget(self.doc_title); layout.addWidget(self.doc_editor)
+        self.docs_tab.setLayout(layout); self.tabs.addTab(self.docs_tab, "DOCS")
+        self.refresh_docs()
+
+    def create_doc(self):
+        title, ok = QInputDialog.getText(self, "New Doc", "Title")
+        if ok and title:
+            c.execute("INSERT INTO docs (user_id, title, content, tags, public, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                      (self.user_id, title, "", "", 0, datetime.utcnow().isoformat()))
+            conn.commit(); self.refresh_docs()
+
+    def refresh_docs(self):
+        self.docs_list.clear()
+        c.execute("SELECT id, title FROM docs WHERE user_id=?", (self.user_id,))
+        for did, title in c.fetchall():
+            item = QListWidgetItem(title); item.setData(Qt.ItemDataRole.UserRole, did); self.docs_list.addItem(item)
+
+    def load_doc(self, item):
+        did = item.data(Qt.ItemDataRole.UserRole)
+        c.execute("SELECT title, content FROM docs WHERE id=?", (did,))
+        res = c.fetchone()
+        if res:
+            self.doc_title.setText(res[0]); self.doc_editor.setPlainText(res[1])
+
+    def save_doc(self):
+        title = self.doc_title.text().strip(); content = self.doc_editor.toPlainText()
+        item = self.docs_list.currentItem()
+        if not item:
+            QMessageBox.warning(self, "ERROR", "Select a document to save"); return
+        did = item.data(Qt.ItemDataRole.UserRole)
+        c.execute("UPDATE docs SET title=?, content=?, updated_at=? WHERE id=?", (title, content, datetime.utcnow().isoformat(), did))
+        conn.commit(); self.refresh_docs(); send_system_notification("Doc saved", title)
+
+    def init_databases_tab(self):
+        self.db_tab = QWidget(); layout = QVBoxLayout()
+        row = QHBoxLayout()
+        self.tables_list = QListWidget(); self.tables_list.itemClicked.connect(self.load_table_rows)
+        create_table_btn = QPushButton("CREATE TABLE"); create_table_btn.clicked.connect(self.create_db_table)
+        add_row_btn = QPushButton("ADD ROW"); add_row_btn.clicked.connect(self.add_db_row)
+        row.addWidget(create_table_btn); row.addWidget(add_row_btn)
+        self.rows_list = QListWidget()
+        layout.addWidget(QLabel("DATABASE TABLES")); layout.addWidget(self.tables_list); layout.addLayout(row)
+        layout.addWidget(QLabel("ROWS (JSON)")); layout.addWidget(self.rows_list)
+        self.db_tab.setLayout(layout); self.tabs.addTab(self.db_tab, "DATABASES")
+        self.refresh_db_tables()
+
+    def create_db_table(self):
+        name, ok = QInputDialog.getText(self, "Table name", "Name")
+        if not ok or not name: return
+        schema_text, ok2 = QInputDialog.getMultiLineText(self, "Schema JSON", "Provide JSON schema or columns (example: {\"cols\": [\"name\",\"age\"]})", "{}")
+        schema = "{}"
+        try:
+            schema = json.dumps(json.loads(schema_text)) if schema_text.strip() else "{}"
+        except Exception:
+            schema = json.dumps({"raw": schema_text})
+        c.execute("INSERT INTO db_tables (user_id, name, schema_json, created_at) VALUES (?, ?, ?, ?)",
+                  (self.user_id, name, schema, datetime.utcnow().isoformat()))
+        conn.commit(); self.refresh_db_tables()
+
+    def refresh_db_tables(self):
+        self.tables_list.clear()
+        c.execute("SELECT id, name FROM db_tables WHERE user_id=?", (self.user_id,))
+        for tid, name in c.fetchall():
+            it = QListWidgetItem(name); it.setData(Qt.ItemDataRole.UserRole, tid); self.tables_list.addItem(it)
+
+    def load_table_rows(self, item):
+        tid = item.data(Qt.ItemDataRole.UserRole); self.rows_list.clear()
+        c.execute("SELECT id, row_json FROM db_rows WHERE table_id=?", (tid,))
+        for rid, row_json in c.fetchall():
+            self.rows_list.addItem(f"{rid}: {row_json}")
+
+    def add_db_row(self):
+        item = self.tables_list.currentItem()
+        if not item: QMessageBox.warning(self, "ERROR", "Select table"); return
+        tid = item.data(Qt.ItemDataRole.UserRole)
+        row_text, ok = QInputDialog.getMultiLineText(self, "Add Row (JSON)", "JSON:", "{}")
+        if ok:
+            try:
+                row_json = json.dumps(json.loads(row_text))
+            except Exception:
+                row_json = json.dumps({"raw": row_text})
+            c.execute("INSERT INTO db_rows (table_id, row_json, created_at) VALUES (?, ?, ?)",
+                      (tid, row_json, datetime.utcnow().isoformat()))
+            conn.commit(); self.load_table_rows(item)
+
+    def init_personal_tab(self):
+        self.personal_tab = QWidget(); layout = QVBoxLayout()
+        b_row = QHBoxLayout()
+        self.budget_list = QListWidget(); self.budget_list.itemClicked.connect(self.load_budget_expenses)
+        new_budget_btn = QPushButton("NEW BUDGET"); new_budget_btn.clicked.connect(self.create_budget)
+        add_exp_btn = QPushButton("ADD EXPENSE"); add_exp_btn.clicked.connect(self.add_expense)
+        b_row.addWidget(new_budget_btn); b_row.addWidget(add_exp_btn)
+        self.expense_list = QListWidget()
+        layout.addWidget(QLabel("BUDGETS")); layout.addWidget(self.budget_list); layout.addLayout(b_row)
+        layout.addWidget(QLabel("EXPENSES")); layout.addWidget(self.expense_list)
+
+        h_row = QHBoxLayout()
+        self.habit_list = QListWidget(); new_habit_btn = QPushButton("NEW HABIT"); new_habit_btn.clicked.connect(self.create_habit)
+        mark_done_btn = QPushButton("MARK DONE TODAY"); mark_done_btn.clicked.connect(self.mark_habit_done)
+        h_row.addWidget(new_habit_btn); h_row.addWidget(mark_done_btn)
+        layout.addWidget(QLabel("HABITS")); layout.addWidget(self.habit_list); layout.addLayout(h_row)
+
+        j_row = QHBoxLayout()
+        self.journal_editor = QTextEdit(); add_entry_btn = QPushButton("ADD ENTRY"); add_entry_btn.clicked.connect(self.add_journal_entry)
+        j_row.addWidget(add_entry_btn)
+        layout.addWidget(QLabel("JOURNAL")); layout.addWidget(self.journal_editor); layout.addLayout(j_row)
+
+        self.personal_tab.setLayout(layout); self.tabs.addTab(self.personal_tab, "PERSONAL")
+        self.refresh_budgets(); self.refresh_habits()
+
+    def create_budget(self):
+        name, ok = QInputDialog.getText(self, "Budget name", "Name")
+        if not ok or not name: return
+        limit, ok2 = QInputDialog.getDouble(self, "Limit", "Amount", 0.0, 0.0, 1e9, 2)
+        c.execute("INSERT INTO budgets (user_id, name, limit_amount, created_at) VALUES (?, ?, ?, ?)",
+                  (self.user_id, name, limit, datetime.utcnow().isoformat()))
+        conn.commit(); self.refresh_budgets()
+
+    def refresh_budgets(self):
+        self.budget_list.clear()
+        c.execute("SELECT id, name, limit_amount FROM budgets WHERE user_id=?", (self.user_id,))
+        for bid, name, lim in c.fetchall():
+            self.budget_list.addItem(f"{bid}: {name} [{lim}]")
+
+    def load_budget_expenses(self, item):
+        text = item.text(); bid = int(text.split(":")[0])
+        self.expense_list.clear()
+        c.execute("SELECT amount, category, note, date FROM expenses WHERE budget_id=?", (bid,))
+        for amount, cat, note, date in c.fetchall():
+            self.expense_list.addItem(f"{date}: {amount} [{cat}] {note}")
+
+    def add_expense(self):
+        item = self.budget_list.currentItem()
+        if not item: QMessageBox.warning(self, "ERROR", "Select budget"); return
+        bid = int(item.text().split(":")[0])
+        amount, ok = QInputDialog.getDouble(self, "Expense amount", "Amount", 0.0, 0.0, 1e9, 2)
+        if not ok: return
+        cat, _ = QInputDialog.getText(self, "Category", "Category")
+        note, _ = QInputDialog.getText(self, "Note", "Note")
+        date = datetime.utcnow().date().isoformat()
+        c.execute("INSERT INTO expenses (budget_id, amount, category, note, date) VALUES (?, ?, ?, ?, ?)",
+                  (bid, amount, cat, note, date))
+        conn.commit(); self.load_budget_expenses(item); send_system_notification("Expense added", f"{amount}")
+
+    def create_habit(self):
+        name, ok = QInputDialog.getText(self, "Habit name", "Name")
+        if not ok or not name: return
+        freq, _ = QInputDialog.getText(self, "Frequency", "daily/weekly/etc")
+        c.execute("INSERT INTO habits (user_id, name, frequency, streak) VALUES (?, ?, ?, ?)",
+                  (self.user_id, name, freq, 0)); conn.commit(); self.refresh_habits()
+
+    def refresh_habits(self):
+        self.habit_list.clear()
+        c.execute("SELECT id, name, frequency, streak FROM habits WHERE user_id=?", (self.user_id,))
+        for hid, name, freq, streak in c.fetchall():
+            self.habit_list.addItem(f"{hid}: {name} [{freq}] streak:{streak}")
+
+    def mark_habit_done(self):
+        item = self.habit_list.currentItem()
+        if not item: QMessageBox.warning(self, "ERROR", "Select habit"); return
+        hid = int(item.text().split(":")[0])
+        date = datetime.utcnow().date().isoformat()
+        c.execute("INSERT INTO habit_logs (habit_id, date, done) VALUES (?, ?, ?)", (hid, date, 1))
+        c.execute("UPDATE habits SET streak = streak + 1 WHERE id=?", (hid,))
+        conn.commit(); self.refresh_habits(); send_system_notification("Habit", "Marked done")
+
+    def add_journal_entry(self):
+        content = self.journal_editor.toPlainText().strip()
+        if not content: QMessageBox.warning(self, "ERROR", "Write something"); return
+        date = datetime.utcnow().date().isoformat()
+        c.execute("INSERT INTO journal_entries (user_id, date, content, mood) VALUES (?, ?, ?, ?)",
+                  (self.user_id, date, content, "")); conn.commit(); self.journal_editor.clear(); send_system_notification("Journal", "Entry saved")
+
+    def init_collab_tab(self):
+        self.collab_tab = QWidget(); layout = QVBoxLayout()
+        self.collab_msg = QLineEdit(); self.collab_msg.setPlaceholderText("Broadcast message to collaborators (placeholder)")
+        send_btn = QPushButton("BROADCAST"); send_btn.clicked.connect(self.broadcast_collab_message)
+        layout.addWidget(QLabel("COLLABORATION (placeholder)")); layout.addWidget(self.collab_msg); layout.addWidget(send_btn)
+        layout.addWidget(QLabel("Notes: Real-time editing / comments / mentions require websocket/server implementation."))
+        self.collab_tab.setLayout(layout); self.tabs.addTab(self.collab_tab, "COLLABORATION")
+
+    def broadcast_collab_message(self):
+        text = self.collab_msg.text().strip()
+        if not text: return
+        c.execute("INSERT INTO messages (user_id, text) VALUES (?, ?)", (self.user_id, f"[COLLAB] {text}"))
+        conn.commit(); self.refresh_messages(); send_system_notification("Collab broadcast", text)
+
+    def init_integrations_tab(self):
+        self.int_tab = QWidget(); layout = QVBoxLayout()
+        g_upload = QPushButton("UPLOAD FILE TO GOOGLE DRIVE (placeholder)"); g_upload.clicked.connect(self.upload_to_gdrive)
+        g_download = QPushButton("DOWNLOAD FROM GOOGLE DRIVE (placeholder)"); g_download.clicked.connect(self.download_from_gdrive)
+        layout.addWidget(QLabel("INTEGRATIONS")); layout.addWidget(g_upload); layout.addWidget(g_download)
+        layout.addWidget(QLabel("Note: configure OAuth and googleapiclient to enable real integration."))
+        self.int_tab.setLayout(layout); self.tabs.addTab(self.int_tab, "INTEGRATIONS")
+
+    def upload_to_gdrive(self):
+        if not _gdrive_available:
+            QMessageBox.information(self, "Google Drive", "Google Drive integration not configured.")
+            return
+        QMessageBox.information(self, "Google Drive", "Upload placeholder - implement real integration.")
+
+    def download_from_gdrive(self):
+        if not _gdrive_available:
+            QMessageBox.information(self, "Google Drive", "Google Drive integration not configured.")
+            return
+        QMessageBox.information(self, "Google Drive", "Download placeholder - implement real integration.")
 
 class LoginRegister(QMainWindow):
     def __init__(self):
