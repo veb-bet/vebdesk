@@ -2,71 +2,46 @@ import sys
 import sqlite3
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QTextEdit,
-    QPushButton, QLineEdit, QLabel, QFileDialog, QListWidget, QStackedWidget, QMessageBox
+    QPushButton, QLineEdit, QLabel, QFileDialog, QListWidget, QStackedWidget,
+    QMessageBox, QHBoxLayout, QInputDialog, QCalendarWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
 
 # === База данных ===
 conn = sqlite3.connect("vebdesk.db")
 c = conn.cursor()
 
-# Пользователи
+# Таблицы
 c.execute('''CREATE TABLE IF NOT EXISTS users
              (id INTEGER PRIMARY KEY, email TEXT UNIQUE, phone TEXT UNIQUE, password TEXT)''')
-# Заметки
 c.execute('''CREATE TABLE IF NOT EXISTS notes
-             (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT, content TEXT)''')
-# Сообщения
+             (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT, content TEXT, tags TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS messages
              (id INTEGER PRIMARY KEY, user_id INTEGER, text TEXT, timestamp TEXT)''')
-# Файлы
 c.execute('''CREATE TABLE IF NOT EXISTS files
              (id INTEGER PRIMARY KEY, user_id INTEGER, filepath TEXT)''')
+c.execute('''CREATE TABLE IF NOT EXISTS events
+             (id INTEGER PRIMARY KEY, user_id INTEGER, title TEXT, date TEXT, color TEXT)''')
 conn.commit()
 
 # === Темы ===
 LIGHT_THEME = """
-QMainWindow {
-    background-color: #FFF0F5;
-}
-QTabWidget::pane { border: 0; }
+QMainWindow { background-color: #FFF0F5; }
 QLabel { color: #800080; font-weight: bold; }
-QPushButton {
-    background-color: #FFB6C1;
-    border-radius: 8px;
-    padding: 5px;
-}
-QPushButton:hover {
-    background-color: #FF69B4;
-}
-QTextEdit, QLineEdit, QListWidget {
-    background-color: #FFE4E1;
-    border: 1px solid #FFB6C1;
-    border-radius: 5px;
-}
+QPushButton { background-color: #FFB6C1; border-radius: 8px; padding: 5px; }
+QPushButton:hover { background-color: #FF69B4; }
+QTextEdit, QLineEdit, QListWidget { background-color: #FFE4E1; border: 1px solid #FFB6C1; border-radius: 5px; }
+QCalendarWidget QWidget { background-color: #FFE4E1; }
 """
 
 DARK_THEME = """
-QMainWindow {
-    background-color: #2C003E;
-}
+QMainWindow { background-color: #2C003E; }
 QLabel { color: #FFB6C1; font-weight: bold; }
-QPushButton {
-    background-color: #800080;
-    color: white;
-    border-radius: 8px;
-    padding: 5px;
-}
-QPushButton:hover {
-    background-color: #DA70D6;
-}
-QTextEdit, QLineEdit, QListWidget {
-    background-color: #4B0082;
-    color: white;
-    border: 1px solid #DA70D6;
-    border-radius: 5px;
-}
+QPushButton { background-color: #800080; color: white; border-radius: 8px; padding: 5px; }
+QPushButton:hover { background-color: #DA70D6; }
+QTextEdit, QLineEdit, QListWidget { background-color: #4B0082; color: white; border: 1px solid #DA70D6; border-radius: 5px; }
+QCalendarWidget QWidget { background-color: #4B0082; color: white; }
 """
 
 # === Главное окно ===
@@ -75,7 +50,7 @@ class VebDesk(QMainWindow):
         super().__init__()
         self.user_id = user_id
         self.setWindowTitle("💖 VebDesk 💖")
-        self.setGeometry(100, 100, 900, 600)
+        self.setGeometry(100, 100, 950, 650)
         self.setStyleSheet(LIGHT_THEME)
         self.dark_mode = False
 
@@ -89,35 +64,99 @@ class VebDesk(QMainWindow):
         self.init_storage_tab()
         self.init_theme_switch()
 
-    # === Вкладки ===
+    # === Заметки с тегами ===
     def init_notes_tab(self):
         self.notes_tab = QWidget()
         layout = QVBoxLayout()
         self.note_editor = QTextEdit()
+        self.note_title = QLineEdit()
+        self.note_title.setPlaceholderText("Название заметки")
+        self.note_tags = QLineEdit()
+        self.note_tags.setPlaceholderText("Теги через запятую")
         save_btn = QPushButton("💾 Сохранить заметку")
         save_btn.clicked.connect(self.save_note)
+        self.notes_list = QListWidget()
+        self.notes_list.itemClicked.connect(self.load_note)
         layout.addWidget(QLabel("Ваши милые заметки:"))
+        layout.addWidget(self.note_title)
+        layout.addWidget(self.note_tags)
         layout.addWidget(self.note_editor)
         layout.addWidget(save_btn)
+        layout.addWidget(QLabel("Сохранённые заметки:"))
+        layout.addWidget(self.notes_list)
         self.notes_tab.setLayout(layout)
         self.tabs.addTab(self.notes_tab, "📝 Заметки")
+        self.refresh_notes()
 
     def save_note(self):
+        title = self.note_title.text() or "Без названия"
         content = self.note_editor.toPlainText()
-        c.execute("INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)", 
-                  (self.user_id, "Без названия", content))
+        tags = self.note_tags.text()
+        c.execute("INSERT INTO notes (user_id, title, content, tags) VALUES (?, ?, ?, ?)",
+                  (self.user_id, title, content, tags))
         conn.commit()
         QMessageBox.information(self, "Ура!", "Заметка сохранена 💕")
         self.note_editor.clear()
+        self.note_title.clear()
+        self.note_tags.clear()
+        self.refresh_notes()
 
+    def refresh_notes(self):
+        self.notes_list.clear()
+        c.execute("SELECT id, title, tags FROM notes WHERE user_id=?", (self.user_id,))
+        for note_id, title, tags in c.fetchall():
+            item = QListWidgetItem(f"{title} [{tags}]")
+            item.setData(Qt.ItemDataRole.UserRole, note_id)
+            self.notes_list.addItem(item)
+
+    def load_note(self, item):
+        note_id = item.data(Qt.ItemDataRole.UserRole)
+        c.execute("SELECT title, content, tags FROM notes WHERE id=?", (note_id,))
+        res = c.fetchone()
+        if res:
+            title, content, tags = res
+            self.note_title.setText(title)
+            self.note_editor.setText(content)
+            self.note_tags.setText(tags)
+
+    # === Календарь с событиями ===
     def init_calendar_tab(self):
         self.calendar_tab = QWidget()
         layout = QVBoxLayout()
-        self.date_label = QLabel(f"Сегодня: {QDate.currentDate().toString()}")
-        layout.addWidget(self.date_label)
+        self.calendar = QCalendarWidget()
+        self.calendar.clicked.connect(self.show_events)
+        self.events_list = QListWidget()
+        add_event_btn = QPushButton("➕ Добавить событие")
+        add_event_btn.clicked.connect(self.add_event)
+        layout.addWidget(QLabel("Календарь:"))
+        layout.addWidget(self.calendar)
+        layout.addWidget(QLabel("События на выбранный день:"))
+        layout.addWidget(self.events_list)
+        layout.addWidget(add_event_btn)
         self.calendar_tab.setLayout(layout)
         self.tabs.addTab(self.calendar_tab, "📅 Календарь")
+        self.show_events()
 
+    def add_event(self):
+        date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+        title, ok = QInputDialog.getText(self, "Новое событие", "Название события:")
+        if ok and title:
+            color = QColorDialog.getColor().name() if hasattr(QColorDialog, "getColor") else "#FF69B4"
+            c.execute("INSERT INTO events (user_id, title, date, color) VALUES (?, ?, ?, ?)",
+                      (self.user_id, title, date, color))
+            conn.commit()
+            self.show_events()
+
+    def show_events(self):
+        self.events_list.clear()
+        date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+        c.execute("SELECT title, color FROM events WHERE user_id=? AND date=?", (self.user_id, date))
+        for title, color in c.fetchall():
+            item = QListWidgetItem(title)
+            item.setBackground(QColor(color))
+            self.events_list.addItem(item)
+
+    # === Калькулятор ===
     def init_calculator_tab(self):
         self.calc_tab = QWidget()
         layout = QVBoxLayout()
@@ -140,6 +179,7 @@ class VebDesk(QMainWindow):
         except Exception as e:
             self.calc_result.setText(f"Ошибка: {e}")
 
+    # === Сообщения ===
     def init_messages_tab(self):
         self.messages_tab = QWidget()
         layout = QVBoxLayout()
@@ -153,6 +193,7 @@ class VebDesk(QMainWindow):
         layout.addWidget(send_btn)
         self.messages_tab.setLayout(layout)
         self.tabs.addTab(self.messages_tab, "💌 Сообщения")
+        self.refresh_messages()
 
     def send_message(self):
         text = self.msg_input.text()
@@ -163,6 +204,13 @@ class VebDesk(QMainWindow):
             self.msg_list.addItem(f"Вы: {text}")
             self.msg_input.clear()
 
+    def refresh_messages(self):
+        self.msg_list.clear()
+        c.execute("SELECT text FROM messages WHERE user_id=?", (self.user_id,))
+        for (text,) in c.fetchall():
+            self.msg_list.addItem(f"Вы: {text}")
+
+    # === Хранилище файлов ===
     def init_storage_tab(self):
         self.storage_tab = QWidget()
         layout = QVBoxLayout()
@@ -174,6 +222,7 @@ class VebDesk(QMainWindow):
         layout.addWidget(add_file_btn)
         self.storage_tab.setLayout(layout)
         self.tabs.addTab(self.storage_tab, "🗂️ Хранилище")
+        self.refresh_files()
 
     def add_file(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Выбрать файл")
@@ -182,6 +231,13 @@ class VebDesk(QMainWindow):
             conn.commit()
             self.file_list.addItem(fname)
 
+    def refresh_files(self):
+        self.file_list.clear()
+        c.execute("SELECT filepath FROM files WHERE user_id=?", (self.user_id,))
+        for (filepath,) in c.fetchall():
+            self.file_list.addItem(filepath)
+
+    # === Тема ===
     def init_theme_switch(self):
         theme_btn = QPushButton("🌙 Переключить тему")
         theme_btn.clicked.connect(self.switch_theme)
@@ -195,8 +251,7 @@ class VebDesk(QMainWindow):
             self.setStyleSheet(DARK_THEME)
             self.dark_mode = True
 
-
-# === Окно входа и регистрации ===
+# === Вход/Регистрация ===
 class LoginRegister(QMainWindow):
     def __init__(self):
         super().__init__()
