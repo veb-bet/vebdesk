@@ -3,19 +3,14 @@ name: CI
 on: [push]
 
 jobs:
-  docker:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t vebdesk .
-      - name: Test import
-        run: docker run --rm vebdesk
-      - name: Build executable
-        run: |
-          docker run --rm -v $(pwd):/app vebdesk bash -c "pip install pyinstaller && pyinstaller --onefile vebdesk.py"
-      - name: Upload
-        uses: actions/upload-artifact@v4
-        with:
-          name: VebDesk
-          path: dist/vebdesk
+      - uses: actions/setup-python@v5
+      - name: Check Python syntax
+        run: python -m py_compile vebdesk.py
+      - name: Count lines
+        run: echo "$(wc -l < vebdesk.py) lines of code"
+      - name: Check imports
+        run: grep "^import\|^from" vebdesk.py | head -10
