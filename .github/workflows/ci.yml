@@ -1,0 +1,223 @@
+name: VebDesk CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.10'
+  APP_NAME: VebDesk
+
+jobs:
+  lint:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 pylint black mypy
+    
+    - name: Run Black (code formatter check)
+      run: |
+        black --check vebdesk.py || echo "Run 'black vebdesk.py' to fix formatting"
+    
+    - name: Run Flake8 (style guide)
+      run: |
+        flake8 vebdesk.py --max-line-length=120 --ignore=E501,W503,E203
+    
+    - name: Run Pylint (code analysis)
+      run: |
+        pylint vebdesk.py --exit-zero --disable=C0114,C0115,C0116,R0903,R0902,R0913,R0914
+    
+    - name: Run MyPy (type checking)
+      run: |
+        mypy vebdesk.py --ignore-missing-imports --allow-untyped-defs || echo "Type checking issues found"
+
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install system dependencies for PyQt6
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libxkbcommon-x11-0 \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-shape0 \
+          libxcb-xinerama0 \
+          libxcb-xfixes0 \
+          libxcb-xkb1 \
+          libxkbcommon-x11-0 \
+          libegl1 \
+          libopengl0 \
+          xvfb
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install pytest pytest-cov pytest-qt
+        pip install PyQt6
+        pip install plyer
+    
+    - name: Run tests with virtual display
+      run: |
+        xvfb-run -a pytest tests/ -v --cov=. --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  build:
+    name: Build Executables
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            output_name: vebdesk-linux
+            pyinstaller_args: --onefile --windowed
+          - os: windows-latest
+            output_name: vebdesk-windows.exe
+            pyinstaller_args: --onefile --windowed
+          - os: macos-latest
+            output_name: vebdesk-macos
+            pyinstaller_args: --onefile --windowed
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb-xinerama0 libxcb-icccm4 libxcb-image0 \
+          libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+          libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install PyQt6 plyer pyinstaller
+    
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --name ${{ matrix.output_name }} \
+          ${{ matrix.pyinstaller_args }} \
+          --add-data "vebdesk.py:." \
+          --hidden-import PyQt6 \
+          --hidden-import PyQt6.QtCore \
+          --hidden-import PyQt6.QtGui \
+          --hidden-import PyQt6.QtWidgets \
+          vebdesk.py
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.output_name }}
+        path: dist/${{ matrix.output_name }}*
+        retention-days: 30
+
+  docker:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: |
+          ghcr.io/${{ github.repository }}:latest
+          ghcr.io/${{ github.repository }}:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  notify:
+    name: Send Notification
+    runs-on: ubuntu-latest
+    needs: [lint, test, build, docker]
+    if: always()
+    
+    steps:
+    - name: Check status
+      id: status
+      run: |
+        if [[ "${{ needs.lint.result }}" == "success" && \
+              "${{ needs.test.result }}" == "success" && \
+              "${{ needs.build.result }}" == "success" ]]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Send success notification
+      if: steps.status.outputs.status == 'success'
+      run: |
+        echo "CI/CD Pipeline completed successfully!"
+        echo "Build artifacts available for download"
+        echo "Docker image: ghcr.io/${{ github.repository }}:latest"
+    
+    - name: Send failure notification
+      if: steps.status.outputs.status == 'failure'
+      run: |
+        echo "CI/CD Pipeline failed!"
+        echo "Check the logs for details"
