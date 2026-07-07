@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QDate, QTime, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFontDatabase, QFont, QColor
 import json
+import re
 from datetime import datetime
 
 _gdrive_available = False
@@ -43,9 +44,192 @@ def send_system_notification(title: str, message: str):
             pass
     QMessageBox.information(None, title, message)
 
-DB_FILE = "vebdesk.db"
+APP_NAME = "VebDesk"
+APP_VERSION = "1.2"
+APP_DIR = os.path.join(os.path.expanduser("~"), ".vebdesk")
+os.makedirs(APP_DIR, exist_ok=True)
+DB_FILE = os.path.join(APP_DIR, "vebdesk.db")
 conn = sqlite3.connect(DB_FILE)
 c = conn.cursor()
+
+LANGUAGES = {
+    "English": "en",
+    "Русский": "ru",
+}
+
+TRANSLATIONS = {
+    "en": {
+        "NOTES": "NOTES",
+        "TITLE": "TITLE",
+        "TAGS_HINT": "TAGS (comma)",
+        "COLOR_HINT": "COLOR (#HEX) optional",
+        "SAVE": "SAVE",
+        "EXPORT": "EXPORT",
+        "IMPORT": "IMPORT",
+        "SAVED": "SAVED",
+        "CALENDAR": "CALENDAR",
+        "EVENTS": "EVENTS",
+        "ADD_EVENT": "ADD EVENT",
+        "EVENT_TITLE": "Event Title",
+        "REMINDER_TIME": "Reminder time (optional)",
+        "RESULT": "RESULT:",
+        "EVAL": "EVAL",
+        "MESSAGES": "MESSAGES",
+        "WRITE_MESSAGE": "WRITE MESSAGE",
+        "SEND": "SEND",
+        "FILES": "FILES",
+        "ADD_FILE": "ADD FILE",
+        "TIMER": "TIMER",
+        "START": "START",
+        "STOP": "STOP",
+        "SEARCH": "SEARCH",
+        "RESULTS": "RESULTS",
+        "PROFILE_SETTINGS": "PROFILE & SETTINGS",
+        "SELECT_THEME": "Select Theme:",
+        "LIGHT_MODE": "Light Mode",
+        "SELECT_FONT": "Select Font:",
+        "ENABLE_NEON": "Enable Neon Animation",
+        "DEFAULT_REMINDER": "Default reminder:",
+        "SAVE_REMINDER": "SAVE REMINDER",
+        "RESET_DEFAULTS": "RESET SETTINGS TO DEFAULTS",
+        "CUSTOM_ACCENT": "Custom accent color (#HEX)",
+        "UI_SCALE": "UI Scale:",
+        "LANGUAGE": "Language:",
+        "TOOLS": "TOOLS",
+        "OPEN_DATA_FOLDER": "OPEN DATA FOLDER",
+        "SHOW_SYSTEM_INFO": "SHOW SYSTEM INFO",
+        "HELP_TITLE": "HELP & SHORTCUTS",
+        "ABOUT": "ABOUT",
+        "READY": "Ready",
+        "ERROR": "ERROR",
+        "INVALID_NUMBER": "Invalid number",
+        "NOTE_SAVED": "Note saved",
+        "EVENT_ADDED": "Event added",
+        "MESSAGE_SENT": "Message sent",
+        "FILE_ADDED": "File added",
+        "TIMER_FINISHED": "Timer finished",
+        "BUDGET_CREATED": "Budget created",
+        "EXPENSE_ADDED": "Expense added",
+        "HABIT_MARKED": "Habit marked done",
+        "JOURNAL_SAVED": "Journal saved",
+        "REGISTERED": "Registered. You can log in.",
+        "ENTER_EMAIL_PASSWORD": "Enter email and password",
+        "INVALID_LOGIN": "Invalid email or password",
+        "EMAIL_EXISTS": "Email or phone already exists",
+        "SELECT_PROJECT": "Select project",
+        "SELECT_TABLE": "Select table",
+        "SELECT_BUDGET": "Select budget",
+        "SELECT_HABIT": "Select habit",
+        "WRITE_SOMETHING": "Write something",
+        "DARK_MODE": "Dark Mode",
+        "RESET_DONE": "Settings reset to defaults.",
+        "OPENING_FOLDER": "Opening data folder...",
+        "ABOUT_TEXT": "VebDesk Pro — cyberpunk desktop workspace, now with localization, custom accent and cross-platform data path.",
+        "COLLAB_PLACEHOLDER": "Broadcast message to collaborators (placeholder)",
+        "COLLAB_TAB": "COLLABORATION (placeholder)",
+        "AI_ASSIST": "AI ASSIST",
+        "APPLY_SUGGESTION": "APPLY SUGGESTION",
+        "ASSISTANT_TITLE": "AI ASSISTANT",
+    },
+    "ru": {
+        "NOTES": "ЗАМЕТКИ",
+        "TITLE": "ЗАГОЛОВОК",
+        "TAGS_HINT": "ТЕГИ (через запятую)",
+        "COLOR_HINT": "ЦВЕТ (#HEX) необязательно",
+        "SAVE": "СОХРАНИТЬ",
+        "EXPORT": "ЭКСПОРТ",
+        "IMPORT": "ИМПОРТ",
+        "SAVED": "СОХРАНЕНО",
+        "CALENDAR": "КАЛЕНДАРЬ",
+        "EVENTS": "СОБЫТИЯ",
+        "ADD_EVENT": "ДОБАВИТЬ СОБЫТИЕ",
+        "EVENT_TITLE": "Название события",
+        "REMINDER_TIME": "Время напоминания (необязательно)",
+        "RESULT": "РЕЗУЛЬТАТ:",
+        "EVAL": "ВЫЧИСЛИТЬ",
+        "MESSAGES": "СООБЩЕНИЯ",
+        "WRITE_MESSAGE": "НАПИСАТЬ СООБЩЕНИЕ",
+        "SEND": "ОТПРАВИТЬ",
+        "FILES": "ФАЙЛЫ",
+        "ADD_FILE": "ДОБАВИТЬ ФАЙЛ",
+        "TIMER": "ТАЙМЕР",
+        "START": "СТАРТ",
+        "STOP": "СТОП",
+        "SEARCH": "ПОИСК",
+        "RESULTS": "РЕЗУЛЬТАТЫ",
+        "PROFILE_SETTINGS": "ПРОФИЛЬ И НАСТРОЙКИ",
+        "SELECT_THEME": "Выберите тему:",
+        "LIGHT_MODE": "Светлый режим",
+        "SELECT_FONT": "Выберите шрифт:",
+        "ENABLE_NEON": "Включить неоновую анимацию",
+        "DEFAULT_REMINDER": "Напоминание по умолчанию:",
+        "SAVE_REMINDER": "СОХРАНИТЬ НАПОМИНАНИЕ",
+        "RESET_DEFAULTS": "СБРОСИТЬ НАСТРОЙКИ",
+        "CUSTOM_ACCENT": "Цвет акцента (#HEX)",
+        "UI_SCALE": "Масштаб UI:",
+        "LANGUAGE": "Язык:",
+        "TOOLS": "ИНСТРУМЕНТЫ",
+        "OPEN_DATA_FOLDER": "ОТКРЫТЬ ПАПКУ ДАННЫХ",
+        "SHOW_SYSTEM_INFO": "ПОКАЗАТЬ СИСТЕМНУЮ ИНФОРМАЦИЮ",
+        "HELP_TITLE": "ПОМОЩЬ И СКОРОСТИ",
+        "ABOUT": "О ПРОГРАММЕ",
+        "READY": "Готово",
+        "ERROR": "ОШИБКА",
+        "INVALID_NUMBER": "Неверное число",
+        "NOTE_SAVED": "Заметка сохранена",
+        "EVENT_ADDED": "Событие добавлено",
+        "MESSAGE_SENT": "Сообщение отправлено",
+        "FILE_ADDED": "Файл добавлен",
+        "TIMER_FINISHED": "Таймер завершен",
+        "BUDGET_CREATED": "Бюджет создан",
+        "EXPENSE_ADDED": "Расход добавлен",
+        "HABIT_MARKED": "Привычка отмечена",
+        "JOURNAL_SAVED": "Дневник сохранен",
+        "REGISTERED": "Зарегистрировано. Можно войти.",
+        "ENTER_EMAIL_PASSWORD": "Введите email и пароль",
+        "INVALID_LOGIN": "Неверный email или пароль",
+        "EMAIL_EXISTS": "Email или телефон уже существуют",
+        "SELECT_PROJECT": "Выберите проект",
+        "SELECT_TABLE": "Выберите таблицу",
+        "SELECT_BUDGET": "Выберите бюджет",
+        "SELECT_HABIT": "Выберите привычку",
+        "WRITE_SOMETHING": "Напишите что-нибудь",
+        "DARK_MODE": "Тёмный режим",
+        "RESET_DONE": "Настройки сброшены.",
+        "OPENING_FOLDER": "Открытие папки данных...",
+        "ABOUT_TEXT": "VebDesk Pro — киберпанковский рабочий стол с локализацией, акцентом и кроссплатформенной поддержкой.",
+        "COLLAB_PLACEHOLDER": "Отправить сообщение коллегам (заглушка)",
+        "COLLAB_TAB": "КОЛЛАБОРАТИВ (заглушка)",
+        "AI_ASSIST": "ИИ ПОМОЩНИК",
+        "APPLY_SUGGESTION": "ПРИМЕНИТЬ",
+        "ASSISTANT_TITLE": "ИИ ПОМОЩНИК",
+    }
+}
+
+def translate(key, lang="en"):
+    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, key)
+
+def system_open_folder(path):
+    try:
+        if sys.platform.startswith("darwin"):
+            os.system(f'open "{path}"')
+        elif os.name == "nt":
+            os.startfile(path)
+        else:
+            os.system(f'xdg-open "{path}"')
+    except Exception:
+        pass
+
+def create_button(label, callback=None, accent="#FFD500", neon=True):
+    btn = QPushButton(label)
+    if callback:
+        btn.clicked.connect(callback)
+    if neon:
+        try:
+            apply_neon_pulse(btn, accent)
+        except Exception:
+            pass
+    return btn
 
 c.execute('''CREATE TABLE IF NOT EXISTS users
              (id INTEGER PRIMARY KEY, email TEXT UNIQUE, phone TEXT UNIQUE, password TEXT)''')
@@ -65,7 +249,10 @@ c.execute('''CREATE TABLE IF NOT EXISTS settings
               dark_mode INTEGER DEFAULT 0,
               font_choice TEXT DEFAULT 'Monospace',
               neon_anim INTEGER DEFAULT 1,
-              default_reminder TEXT DEFAULT NULL)''')
+              default_reminder TEXT DEFAULT NULL,
+              language TEXT DEFAULT 'en',
+              accent_color TEXT DEFAULT NULL,
+              ui_scale INTEGER DEFAULT 100)''')
 c.execute('''CREATE TABLE IF NOT EXISTS projects
              (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, description TEXT, color TEXT, created_at TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS boards
@@ -95,6 +282,16 @@ c.execute('''CREATE TABLE IF NOT EXISTS journal_entries
              (id INTEGER PRIMARY KEY, user_id INTEGER, date TEXT, content TEXT, mood TEXT)''')
 c.execute('''CREATE TABLE IF NOT EXISTS collections
              (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, items_json TEXT, created_at TEXT)''')
+
+c.execute("PRAGMA table_info(settings)")
+existing_settings_columns = [row[1] for row in c.fetchall()]
+if "language" not in existing_settings_columns:
+    c.execute("ALTER TABLE settings ADD COLUMN language TEXT DEFAULT 'en'")
+if "accent_color" not in existing_settings_columns:
+    c.execute("ALTER TABLE settings ADD COLUMN accent_color TEXT DEFAULT NULL")
+if "ui_scale" not in existing_settings_columns:
+    c.execute("ALTER TABLE settings ADD COLUMN ui_scale INTEGER DEFAULT 100")
+
 conn.commit()
 
 THEMES = {
@@ -135,6 +332,7 @@ QPushButton {{
     font-weight: bold;
 }}
 QPushButton:hover {{ background-color: {ac}; color: {bg}; }}
+QPushButton:pressed {{ background-color: {bg}; color: {ac}; border-color: {tfg}; }}
 QLineEdit, QTextEdit, QListWidget, QCalendarWidget {{
     background-color: {input_bg};
     color: {text_color};
@@ -168,27 +366,28 @@ def apply_neon_pulse(widget, color_hex, radius_min=4, radius_max=18, duration=12
     widget._neon_anim_refs.append((effect, anim))
     return effect, anim
 
-def load_custom_font(font_choice=None):
+def load_custom_font(font_choice=None, scale=100):
+    size = 10 + round((scale - 100) / 20)
     if font_choice == "Cyberpunk":
         if os.path.exists("Orbitron-Regular.ttf"):
             fid = QFontDatabase.addApplicationFont("Orbitron-Regular.ttf")
             families = QFontDatabase.applicationFontFamilies(fid)
             if families:
-                return QFont(families[0], 11)
-        return QFont("Courier New", 11)
+                return QFont(families[0], max(size, 11))
+        return QFont("Courier New", max(size, 11))
     else:
         if os.path.exists("VT323-Regular.ttf"):
             fid = QFontDatabase.addApplicationFont("VT323-Regular.ttf")
             families = QFontDatabase.applicationFontFamilies(fid)
             if families:
-                return QFont(families[0], 11)
-        return QFont("Courier New", 10)
+                return QFont(families[0], size)
+        return QFont("Courier New", size)
 
 class VebDesk(QMainWindow):
     def __init__(self, user_id):
         super().__init__()
         self.user_id = user_id
-        self.setWindowTitle("VebDesk Pro — Cyberpunk")
+        self.setWindowTitle(f"{APP_NAME} Pro — Cyberpunk")
         self.setGeometry(80, 60, 1100, 750)
 
         self.current_theme = THEMES["Neon Yellow"]
@@ -197,16 +396,90 @@ class VebDesk(QMainWindow):
         self.font_choice = "Monospace"
         self.neon_animation_enabled = True
         self.default_reminder = None
+        self.language = "en"
+        self.accent_color = None
+        self.ui_scale = 100
 
         self.load_user_settings()
         self.setStyleSheet(theme_to_stylesheet(self.current_theme, self.dark_mode))
-        self.setFont(load_custom_font(self.font_choice))
+        self.setFont(load_custom_font(self.font_choice, self.ui_scale))
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         self.init_tabs()
         self.init_theme_switch()
         self.init_reminder_checker()
+        self.statusBar().showMessage(translate("READY", self.language))
+
+    def tr(self, key):
+        return translate(key, self.language)
+
+    def create_button(self, label, callback=None):
+        btn = QPushButton(label)
+        if callback:
+            btn.clicked.connect(callback)
+        if self.neon_animation_enabled:
+            apply_neon_pulse(btn, self.current_theme["accent"])
+        return btn
+
+    def refresh_ui_texts(self):
+        self.statusBar().showMessage(self.tr("READY"))
+        if hasattr(self, "dark_checkbox"):
+            self.dark_checkbox.setText(self.tr("DARK_MODE"))
+        if hasattr(self, "font_combo"):
+            pass
+        if hasattr(self, "accent_input"):
+            self.accent_input.setPlaceholderText(self.tr("CUSTOM_ACCENT"))
+        if hasattr(self, "reminder_label"):
+            self.reminder_label.setText(self.tr("DEFAULT_REMINDER"))
+        if hasattr(self, "save_rem_btn"):
+            self.save_rem_btn.setText(self.tr("SAVE_REMINDER"))
+        if hasattr(self, "reset_btn"):
+            self.reset_btn.setText(self.tr("RESET_DEFAULTS"))
+        if hasattr(self, "theme_combo"):
+            pass
+        if hasattr(self, "language_combo"):
+            pass
+        try:
+            idx = self.tabs.indexOf(self.profile_tab)
+            if idx >= 0:
+                self.tabs.setTabText(idx, self.tr("PROFILE_SETTINGS"))
+        except Exception:
+            pass
+        try:
+            idx = self.tabs.indexOf(self.tools_tab)
+            if idx >= 0:
+                self.tabs.setTabText(idx, self.tr("TOOLS"))
+        except Exception:
+            pass
+
+    def open_note_assistant(self):
+        title = self.note_title.text().strip()
+        body = self.note_editor.toPlainText().strip()
+        generated = self.generate_note_assistant_text(title, body)
+        self.ai_output.setPlainText(generated)
+        self.ai_apply_btn.setEnabled(bool(generated.strip()))
+
+    def apply_ai_suggestion(self):
+        suggestion = self.ai_output.toPlainText().strip()
+        if suggestion:
+            self.note_editor.append("\n" + suggestion)
+            send_system_notification(self.tr("AI_ASSIST"), self.tr("NOTE_SAVED"))
+
+    def generate_note_assistant_text(self, title, body):
+        if not title and not body:
+            return "Try a cyberpunk note outline:\n- Goal\n- Tasks\n- Ideas\n- Next steps"
+        keywords = re.findall(r"\b[\w-]{4,}\b", f"{title} {body}")
+        keywords = [w for w in dict.fromkeys(keywords) if len(w) > 3][:5]
+        summary = title if title else body.split(". ")[0][:120]
+        prompt = [f"Summary: {summary}"]
+        if body:
+            prompt.append("Key points:")
+            for i, kw in enumerate(keywords[:3], 1):
+                prompt.append(f"{i}. {kw}")
+        prompt.append("Suggested next actions:")
+        prompt.extend([f"- Draft a short task for {kw}" for kw in keywords[:3]])
+        return "\n".join(prompt)
 
     def init_tabs(self):
         self.init_notes_tab()
@@ -217,6 +490,7 @@ class VebDesk(QMainWindow):
         self.init_timer_tab()
         self.init_search_tab()
         self.init_profile_tab()
+        self.init_tools_tab()
         self.init_projects_tab()
         self.init_docs_tab()
         self.init_databases_tab()
@@ -234,26 +508,33 @@ class VebDesk(QMainWindow):
         self.note_color = QLineEdit()
         self.note_color.setPlaceholderText("COLOR (#HEX) optional")
         self.note_editor = QTextEdit()
-        save_btn = QPushButton("SAVE")
-        save_btn.clicked.connect(self.save_note)
-        if self.neon_animation_enabled:
-            apply_neon_pulse(save_btn, self.current_theme["accent"])
+        save_btn = self.create_button(self.tr("SAVE"), self.save_note)
         self.notes_list = QListWidget()
         self.notes_list.itemClicked.connect(self.load_note)
-        export_btn = QPushButton("EXPORT")
-        export_btn.clicked.connect(self.export_notes)
-        import_btn = QPushButton("IMPORT")
-        import_btn.clicked.connect(self.import_notes)
+        export_btn = self.create_button(self.tr("EXPORT"), self.export_notes)
+        import_btn = self.create_button(self.tr("IMPORT"), self.import_notes)
+        self.ai_btn = self.create_button(self.tr("AI_ASSIST"), self.open_note_assistant)
+        self.ai_apply_btn = self.create_button(self.tr("APPLY_SUGGESTION"), self.apply_ai_suggestion)
+        self.ai_apply_btn.setEnabled(False)
+        self.ai_output = QTextEdit()
+        self.ai_output.setReadOnly(True)
+        self.ai_output.setPlaceholderText(self.tr("ASSISTANT_TITLE"))
         row = QHBoxLayout()
         row.addWidget(save_btn)
         row.addWidget(export_btn)
         row.addWidget(import_btn)
+        row2 = QHBoxLayout()
+        row2.addWidget(self.ai_btn)
+        row2.addWidget(self.ai_apply_btn)
         layout.addWidget(QLabel("NOTES"))
         layout.addWidget(self.note_title)
         layout.addWidget(self.note_tags)
         layout.addWidget(self.note_color)
         layout.addWidget(self.note_editor)
         layout.addLayout(row)
+        layout.addLayout(row2)
+        layout.addWidget(QLabel(self.tr("ASSISTANT_TITLE")))
+        layout.addWidget(self.ai_output)
         layout.addWidget(QLabel("SAVED"))
         layout.addWidget(self.notes_list)
         self.notes_tab.setLayout(layout)
@@ -336,7 +617,7 @@ class VebDesk(QMainWindow):
         self.calendar.setGridVisible(True)
         self.calendar.clicked.connect(self.show_events)
         self.events_list = QListWidget()
-        add_event_btn = QPushButton("ADD EVENT")
+        add_event_btn = self.create_button("ADD EVENT")
         add_event_btn.clicked.connect(self.add_event)
         if self.neon_animation_enabled:
             apply_neon_pulse(add_event_btn, self.current_theme["accent"])
@@ -377,7 +658,7 @@ class VebDesk(QMainWindow):
         self.calc_input = QLineEdit()
         self.calc_input.setPlaceholderText("expression e.g. 2+2*3")
         self.calc_result = QLabel("RESULT:")
-        calc_btn = QPushButton("EVAL")
+        calc_btn = self.create_button("EVAL")
         calc_btn.clicked.connect(self.calculate)
         layout.addWidget(self.calc_input)
         layout.addWidget(calc_btn)
@@ -399,7 +680,7 @@ class VebDesk(QMainWindow):
         self.msg_list = QListWidget()
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("WRITE MESSAGE")
-        send_btn = QPushButton("SEND")
+        send_btn = self.create_button("SEND")
         send_btn.clicked.connect(self.send_message)
         layout.addWidget(QLabel("MESSAGES"))
         layout.addWidget(self.msg_list)
@@ -430,7 +711,7 @@ class VebDesk(QMainWindow):
         self.storage_tab = QWidget()
         layout = QVBoxLayout()
         self.file_list = QListWidget()
-        add_file_btn = QPushButton("ADD FILE")
+        add_file_btn = self.create_button("ADD FILE")
         add_file_btn.clicked.connect(self.add_file)
         layout.addWidget(QLabel("FILES"))
         layout.addWidget(self.file_list)
@@ -462,8 +743,8 @@ class VebDesk(QMainWindow):
         self.timer_input = QLineEdit()
         self.timer_input.setPlaceholderText("minutes (e.g. 25)")
         self.timer_label = QLabel("TIMER: 00:00")
-        start_btn = QPushButton("START")
-        stop_btn = QPushButton("STOP")
+        start_btn = self.create_button("START")
+        stop_btn = self.create_button("STOP")
         start_btn.clicked.connect(self.start_timer)
         stop_btn.clicked.connect(self.stop_timer)
         layout.addWidget(self.timer_input)
@@ -504,7 +785,7 @@ class VebDesk(QMainWindow):
         layout = QVBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("keyword")
-        search_btn = QPushButton("SEARCH")
+        search_btn = self.create_button("SEARCH")
         search_btn.clicked.connect(self.search_all)
         self.search_results = QListWidget()
         layout.addWidget(self.search_input)
@@ -527,15 +808,16 @@ class VebDesk(QMainWindow):
     def init_profile_tab(self):
         self.profile_tab = QWidget()
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("PROFILE & SETTINGS"))
+        layout.addWidget(QLabel(self.tr("PROFILE_SETTINGS")))
+
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(THEMES.keys())
         self.theme_combo.setCurrentText(self.current_theme_name)
         self.theme_combo.currentTextChanged.connect(self.change_theme)
-        layout.addWidget(QLabel("Select Theme:"))
+        layout.addWidget(QLabel(self.tr("SELECT_THEME")))
         layout.addWidget(self.theme_combo)
 
-        self.dark_checkbox = QCheckBox("Ligth Mode")
+        self.dark_checkbox = QCheckBox(self.tr("DARK_MODE"))
         self.dark_checkbox.setChecked(self.dark_mode)
         self.dark_checkbox.stateChanged.connect(self.toggle_dark_from_ui)
         layout.addWidget(self.dark_checkbox)
@@ -544,10 +826,32 @@ class VebDesk(QMainWindow):
         self.font_combo.addItems(["Monospace", "Cyberpunk"])
         self.font_combo.setCurrentText(self.font_choice)
         self.font_combo.currentTextChanged.connect(self.change_font)
-        layout.addWidget(QLabel("Select Font:"))
+        layout.addWidget(QLabel(self.tr("SELECT_FONT")))
         layout.addWidget(self.font_combo)
 
-        self.neon_checkbox = QCheckBox("Enable Neon Animation")
+        self.accent_input = QLineEdit()
+        self.accent_input.setPlaceholderText(self.tr("CUSTOM_ACCENT"))
+        self.accent_input.setText(self.accent_color or "")
+        self.accent_input.textChanged.connect(self.change_accent_color)
+        layout.addWidget(QLabel(self.tr("CUSTOM_ACCENT")))
+        layout.addWidget(self.accent_input)
+
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems(["80%", "90%", "100%", "110%", "120%", "130%"])
+        self.scale_combo.setCurrentText(f"{self.ui_scale}%")
+        self.scale_combo.currentTextChanged.connect(self.change_ui_scale)
+        layout.addWidget(QLabel(self.tr("UI_SCALE")))
+        layout.addWidget(self.scale_combo)
+
+        self.language_combo = QComboBox()
+        self.language_combo.addItems(LANGUAGES.keys())
+        current_language_name = next((name for name, code in LANGUAGES.items() if code == self.language), "English")
+        self.language_combo.setCurrentText(current_language_name)
+        self.language_combo.currentTextChanged.connect(self.change_language)
+        layout.addWidget(QLabel(self.tr("LANGUAGE")))
+        layout.addWidget(self.language_combo)
+
+        self.neon_checkbox = QCheckBox(self.tr("ENABLE_NEON"))
         self.neon_checkbox.setChecked(bool(self.neon_animation_enabled))
         self.neon_checkbox.stateChanged.connect(self.toggle_neon_animation)
         layout.addWidget(self.neon_checkbox)
@@ -561,23 +865,59 @@ class VebDesk(QMainWindow):
                 self.reminder_time_edit.setTime(QTime(hh, mm))
             except Exception:
                 pass
-        row.addWidget(QLabel("Default reminder:"))
+        self.reminder_label = QLabel(self.tr("DEFAULT_REMINDER"))
+        row.addWidget(self.reminder_label)
         row.addWidget(self.reminder_time_edit)
         layout.addLayout(row)
-        save_rem_btn = QPushButton("SAVE REMINDER")
-        save_rem_btn.clicked.connect(self.save_default_reminder)
-        layout.addWidget(save_rem_btn)
-        reset_btn = QPushButton("RESET SETTINGS TO DEFAULTS")
-        reset_btn.clicked.connect(self.reset_defaults)
-        layout.addWidget(reset_btn)
+
+        self.save_rem_btn = self.create_button(self.tr("SAVE_REMINDER"))
+        self.save_rem_btn.clicked.connect(self.save_default_reminder)
+        layout.addWidget(self.save_rem_btn)
+
+        self.reset_btn = self.create_button(self.tr("RESET_DEFAULTS"))
+        self.reset_btn.clicked.connect(self.reset_defaults)
+        layout.addWidget(self.reset_btn)
 
         self.profile_tab.setLayout(layout)
-        self.tabs.addTab(self.profile_tab, "PROFILE")
+        self.tabs.addTab(self.profile_tab, self.tr("PROFILE_SETTINGS"))
+
+    def init_tools_tab(self):
+        self.tools_tab = QWidget()
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(self.tr("TOOLS")))
+        open_folder_btn = self.create_button(self.tr("OPEN_DATA_FOLDER"))
+        open_folder_btn.clicked.connect(self.open_data_folder)
+        layout.addWidget(open_folder_btn)
+        self.sys_info_label = QLabel("")
+        refresh_btn = self.create_button(self.tr("SHOW_SYSTEM_INFO"))
+        refresh_btn.clicked.connect(self.refresh_system_info)
+        layout.addWidget(refresh_btn)
+        layout.addWidget(self.sys_info_label)
+        about_btn = self.create_button(self.tr("ABOUT"))
+        about_btn.clicked.connect(self.show_about)
+        layout.addWidget(about_btn)
+        self.tools_tab.setLayout(layout)
+        self.tabs.addTab(self.tools_tab, self.tr("TOOLS"))
+        self.refresh_system_info()
+
+    def open_data_folder(self):
+        system_open_folder(APP_DIR)
+        send_system_notification(self.tr("OPENING_FOLDER"), APP_DIR)
+
+    def refresh_system_info(self):
+        self.sys_info_label.setText(
+            f"Platform: {sys.platform}\nPython: {sys.version.split()[0]}\nData path: {APP_DIR}"
+        )
+
+    def show_about(self):
+        QMessageBox.information(self, self.tr("ABOUT"), self.tr("ABOUT_TEXT"))
 
     def change_theme(self, text):
         if text in THEMES:
             self.current_theme_name = text
-            self.current_theme = THEMES[text]
+            self.current_theme = dict(THEMES[text])
+            if self.accent_color and QColor(self.accent_color).isValid():
+                self.current_theme["accent"] = self.accent_color
             self.apply_style_and_save()
 
     def toggle_dark_from_ui(self, state):
@@ -586,7 +926,27 @@ class VebDesk(QMainWindow):
 
     def change_font(self, text):
         self.font_choice = text
-        self.setFont(load_custom_font(self.font_choice))
+        self.setFont(load_custom_font(self.font_choice, self.ui_scale))
+        self.save_settings()
+
+    def change_accent_color(self, text):
+        if text.strip():
+            self.accent_color = text.strip()
+            if QColor(self.accent_color).isValid():
+                self.current_theme["accent"] = self.accent_color
+        self.apply_style_and_save()
+
+    def change_ui_scale(self, text):
+        try:
+            self.ui_scale = int(text.replace("%", ""))
+            self.setFont(load_custom_font(self.font_choice, self.ui_scale))
+            self.save_settings()
+        except Exception:
+            pass
+
+    def change_language(self, text):
+        self.language = LANGUAGES.get(text, "en")
+        self.refresh_ui_texts()
         self.save_settings()
 
     def toggle_neon_animation(self, state):
@@ -597,52 +957,65 @@ class VebDesk(QMainWindow):
         t = self.reminder_time_edit.time().toString("HH:mm")
         self.default_reminder = t
         self.save_settings()
-        QMessageBox.information(self, "OK", f"Default reminder set to {t}")
+        QMessageBox.information(self, self.tr("SAVE_REMINDER"), f"{self.tr('DEFAULT_REMINDER')} {t}")
 
     def apply_style_and_save(self):
+        if self.accent_color and QColor(self.accent_color).isValid():
+            self.current_theme["accent"] = self.accent_color
         self.setStyleSheet(theme_to_stylesheet(self.current_theme, self.dark_mode))
+        self.setFont(load_custom_font(self.font_choice, self.ui_scale))
         self.save_settings()
 
     def reset_defaults(self):
         self.current_theme_name = "Neon Yellow"
-        self.current_theme = THEMES[self.current_theme_name]
+        self.current_theme = dict(THEMES[self.current_theme_name])
         self.dark_mode = False
         self.font_choice = "Monospace"
         self.neon_animation_enabled = True
         self.default_reminder = None
+        self.language = "en"
+        self.accent_color = None
+        self.ui_scale = 100
         self.theme_combo.setCurrentText(self.current_theme_name)
         self.dark_checkbox.setChecked(self.dark_mode)
         self.font_combo.setCurrentText(self.font_choice)
         self.neon_checkbox.setChecked(self.neon_animation_enabled)
+        self.scale_combo.setCurrentText(f"{self.ui_scale}%")
+        self.language_combo.setCurrentText("English")
         self.reminder_time_edit.setTime(QTime(0, 0))
         self.apply_style_and_save()
-        self.setFont(load_custom_font(self.font_choice))
-        QMessageBox.information(self, "RESET", "Settings reset to defaults.")
+        self.setFont(load_custom_font(self.font_choice, self.ui_scale))
+        QMessageBox.information(self, self.tr("RESET_DEFAULTS"), self.tr("RESET_DONE"))
 
     def load_user_settings(self):
-        c.execute("SELECT theme, dark_mode, font_choice, neon_anim, default_reminder FROM settings WHERE user_id=?", (self.user_id,))
+        c.execute("SELECT theme, dark_mode, font_choice, neon_anim, default_reminder, language, accent_color, ui_scale FROM settings WHERE user_id=?", (self.user_id,))
         res = c.fetchone()
         if res:
-            theme, dark_mode, font_choice, neon_anim, default_reminder = res
+            theme, dark_mode, font_choice, neon_anim, default_reminder, language, accent_color, ui_scale = res
             if theme in THEMES:
                 self.current_theme_name = theme
-                self.current_theme = THEMES[theme]
+                self.current_theme = dict(THEMES[theme])
             self.dark_mode = bool(dark_mode)
             self.font_choice = font_choice or "Monospace"
             self.neon_animation_enabled = bool(neon_anim)
             self.default_reminder = default_reminder
+            self.language = language or "en"
+            self.accent_color = accent_color
+            self.ui_scale = ui_scale or 100
+            if self.accent_color and QColor(self.accent_color).isValid():
+                self.current_theme["accent"] = self.accent_color
         else:
-            c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder) VALUES (?, ?, ?, ?, ?, ?)",
-                      (self.user_id, self.current_theme_name, int(self.dark_mode), self.font_choice, int(self.neon_animation_enabled), self.default_reminder))
+            c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder, language, accent_color, ui_scale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      (self.user_id, self.current_theme_name, int(self.dark_mode), self.font_choice, int(self.neon_animation_enabled), self.default_reminder, self.language, self.accent_color, self.ui_scale))
             conn.commit()
 
     def save_settings(self):
-        c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder) VALUES (?, ?, ?, ?, ?, ?)",
-                  (self.user_id, self.current_theme_name, int(self.dark_mode), self.font_choice, int(self.neon_animation_enabled), self.default_reminder))
+        c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder, language, accent_color, ui_scale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (self.user_id, self.current_theme_name, int(self.dark_mode), self.font_choice, int(self.neon_animation_enabled), self.default_reminder, self.language, self.accent_color, self.ui_scale))
         conn.commit()
 
     def init_theme_switch(self):
-        theme_btn = QPushButton("SWITCH THEME")
+        theme_btn = self.create_button("SWITCH THEME")
         theme_btn.setFixedHeight(28)
         theme_btn.clicked.connect(self.toggle_dark_corner)
         try:
@@ -689,9 +1062,9 @@ class VebDesk(QMainWindow):
         row = QHBoxLayout()
         self.projects_list = QListWidget()
         self.projects_list.itemClicked.connect(self.open_project_board)
-        add_proj_btn = QPushButton("NEW PROJECT")
+        add_proj_btn = self.create_button("NEW PROJECT")
         add_proj_btn.clicked.connect(self.add_project)
-        add_board_btn = QPushButton("NEW BOARD")
+        add_board_btn = self.create_button("NEW BOARD")
         add_board_btn.clicked.connect(self.create_board_for_selected_project)
         row.addWidget(add_proj_btn)
         row.addWidget(add_board_btn)
@@ -758,9 +1131,9 @@ class VebDesk(QMainWindow):
         row = QHBoxLayout()
         self.docs_list = QListWidget()
         self.docs_list.itemClicked.connect(self.load_doc)
-        new_doc_btn = QPushButton("NEW DOC")
+        new_doc_btn = self.create_button("NEW DOC")
         new_doc_btn.clicked.connect(self.create_doc)
-        save_doc_btn = QPushButton("SAVE DOC")
+        save_doc_btn = self.create_button("SAVE DOC")
         save_doc_btn.clicked.connect(self.save_doc)
         row.addWidget(new_doc_btn)
         row.addWidget(save_doc_btn)
@@ -821,9 +1194,9 @@ class VebDesk(QMainWindow):
         row = QHBoxLayout()
         self.tables_list = QListWidget()
         self.tables_list.itemClicked.connect(self.load_table_rows)
-        create_table_btn = QPushButton("CREATE TABLE")
+        create_table_btn = self.create_button("CREATE TABLE")
         create_table_btn.clicked.connect(self.create_db_table)
-        add_row_btn = QPushButton("ADD ROW")
+        add_row_btn = self.create_button("ADD ROW")
         add_row_btn.clicked.connect(self.add_db_row)
         row.addWidget(create_table_btn)
         row.addWidget(add_row_btn)
@@ -891,9 +1264,9 @@ class VebDesk(QMainWindow):
         b_row = QHBoxLayout()
         self.budget_list = QListWidget()
         self.budget_list.itemClicked.connect(self.load_budget_expenses)
-        new_budget_btn = QPushButton("NEW BUDGET")
+        new_budget_btn = self.create_button("NEW BUDGET")
         new_budget_btn.clicked.connect(self.create_budget)
-        add_exp_btn = QPushButton("ADD EXPENSE")
+        add_exp_btn = self.create_button("ADD EXPENSE")
         add_exp_btn.clicked.connect(self.add_expense)
         b_row.addWidget(new_budget_btn)
         b_row.addWidget(add_exp_btn)
@@ -906,9 +1279,9 @@ class VebDesk(QMainWindow):
 
         h_row = QHBoxLayout()
         self.habit_list = QListWidget()
-        new_habit_btn = QPushButton("NEW HABIT")
+        new_habit_btn = self.create_button("NEW HABIT")
         new_habit_btn.clicked.connect(self.create_habit)
-        mark_done_btn = QPushButton("MARK DONE TODAY")
+        mark_done_btn = self.create_button("MARK DONE TODAY")
         mark_done_btn.clicked.connect(self.mark_habit_done)
         h_row.addWidget(new_habit_btn)
         h_row.addWidget(mark_done_btn)
@@ -918,7 +1291,7 @@ class VebDesk(QMainWindow):
 
         j_row = QHBoxLayout()
         self.journal_editor = QTextEdit()
-        add_entry_btn = QPushButton("ADD ENTRY")
+        add_entry_btn = self.create_button("ADD ENTRY")
         add_entry_btn.clicked.connect(self.add_journal_entry)
         j_row.addWidget(add_entry_btn)
         layout.addWidget(QLabel("JOURNAL"))
@@ -1018,7 +1391,7 @@ class VebDesk(QMainWindow):
         layout = QVBoxLayout()
         self.collab_msg = QLineEdit()
         self.collab_msg.setPlaceholderText("Broadcast message to collaborators (placeholder)")
-        send_btn = QPushButton("BROADCAST")
+        send_btn = self.create_button("BROADCAST")
         send_btn.clicked.connect(self.broadcast_collab_message)
         layout.addWidget(QLabel("COLLABORATION (placeholder)"))
         layout.addWidget(self.collab_msg)
@@ -1039,9 +1412,9 @@ class VebDesk(QMainWindow):
     def init_integrations_tab(self):
         self.int_tab = QWidget()
         layout = QVBoxLayout()
-        g_upload = QPushButton("UPLOAD FILE TO GOOGLE DRIVE (placeholder)")
+        g_upload = self.create_button("UPLOAD FILE TO GOOGLE DRIVE (placeholder)")
         g_upload.clicked.connect(self.upload_to_gdrive)
-        g_download = QPushButton("DOWNLOAD FROM GOOGLE DRIVE (placeholder)")
+        g_download = self.create_button("DOWNLOAD FROM GOOGLE DRIVE (placeholder)")
         g_download.clicked.connect(self.download_from_gdrive)
         layout.addWidget(QLabel("INTEGRATIONS"))
         layout.addWidget(g_upload)
@@ -1078,9 +1451,9 @@ class LoginRegister(QMainWindow):
         self.login_pass = QLineEdit()
         self.login_pass.setPlaceholderText("password")
         self.login_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        login_btn = QPushButton("LOGIN")
+        login_btn = create_button("LOGIN")
         login_btn.clicked.connect(self.login)
-        switch_btn = QPushButton("NO ACCOUNT? REGISTER")
+        switch_btn = create_button("NO ACCOUNT? REGISTER")
         switch_btn.clicked.connect(lambda: self.stack.setCurrentIndex(1))
         layout.addWidget(QLabel("LOGIN"))
         layout.addWidget(self.login_email)
@@ -1100,9 +1473,9 @@ class LoginRegister(QMainWindow):
         self.reg_pass = QLineEdit()
         self.reg_pass.setPlaceholderText("password")
         self.reg_pass.setEchoMode(QLineEdit.EchoMode.Password)
-        reg_btn = QPushButton("REGISTER")
+        reg_btn = create_button("REGISTER")
         reg_btn.clicked.connect(self.register)
-        switch_btn = QPushButton("ALREADY HAVE ACCOUNT? LOGIN")
+        switch_btn = create_button("ALREADY HAVE ACCOUNT? LOGIN")
         switch_btn.clicked.connect(lambda: self.stack.setCurrentIndex(0))
         layout.addWidget(QLabel("REGISTER"))
         layout.addWidget(self.reg_email)
@@ -1139,8 +1512,8 @@ class LoginRegister(QMainWindow):
             c.execute("INSERT INTO users (email, phone, password) VALUES (?, ?, ?)", (email, phone, password))
             conn.commit()
             user_id = c.lastrowid
-            c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder) VALUES (?, ?, ?, ?, ?, ?)",
-                      (user_id, "Neon Yellow", 0, "Monospace", 1, None))
+            c.execute("INSERT OR REPLACE INTO settings (user_id, theme, dark_mode, font_choice, neon_anim, default_reminder, language, accent_color, ui_scale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      (user_id, "Neon Yellow", 0, "Monospace", 1, None, "en", None, 100))
             conn.commit()
             QMessageBox.information(self, "OK", "Registered. You can log in.")
             self.stack.setCurrentIndex(0)
